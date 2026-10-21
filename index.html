@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ตารางเรียน</title>
+  <link href="https://fonts.googleapis.com/css2?family=Itim&family=Mali:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header>
+    <div class="top">
+      <div class="logo" id="logo"></div>
+      <div class="tools"><span id="clock"></span><button class="round" id="theme" title="สลับโหมดมืด/สว่าง">🌙</button>
+      </div>
+    </div>
+    <nav id="tabs"></nav>
+  </header>
+  <main id="main"></main>
+  <script src="data.js"></script>
+  <script>
+    const $ = id => document.getElementById(id);
+    const toMin = t => { const [a, b] = t.split(':'); return +a * 60 + +b };
+    const left = m => m >= 60 ? `${Math.floor(m / 60)} ชม. ${m % 60} นาที` : `${m} นาที`;
+    $('logo').innerHTML = `📚 ${INFO.title}<small>กลุ่ม ${INFO.group} · ภาคเรียน ${INFO.term}</small>`;
+
+    // จำลองเวลาทดสอบ: เพิ่ม ?day=3&time=10:15 ท้าย URL
+    const q = new URLSearchParams(location.search);
+    function now() {
+      if (q.get('day')) return { dow: +q.get('day'), mins: toMin(q.get('time') || '08:00') };
+      const d = new Date(); return { dow: d.getDay(), mins: d.getHours() * 60 + d.getMinutes(), d };
+    }
+
+    // ----- สร้างหน้า -----
+    const tabs = $('tabs'), main = $('main'), secs = {};
+    Object.keys(DAYS).forEach(k => {
+      const D = DAYS[k], rows = SCHEDULE.filter(x => x.day == k).sort((a, b) => toMin(a.start) - toMin(b.start));
+      const b = document.createElement('button'); b.textContent = D.short; b.dataset.d = k; b.style.setProperty('--c', D.color);
+      b.onclick = () => $('d' + k).scrollIntoView(); tabs.appendChild(b);
+      let h = '', prev = null, items = [];
+      rows.forEach((r, i) => {
+        if (prev && toMin(r.start) - toMin(prev.end) >= 20) {
+          const lunch = toMin(prev.end) <= 750 && toMin(r.start) >= 780;
+          h += `<div class="gap"><span>${lunch ? '🍚 พักเที่ยง' : '☕ ว่าง'} ${prev.end}-${r.start}</span></div>`;
+        }
+        h += `<article class="card" data-s="${toMin(r.start)}" data-e="${toMin(r.end)}" data-n="${r.name}" style="--r:${i % 2 ? 0.7 : -0.7}deg;--c:${D.color}">
+      <span class="chip"></span>
+      <div class="time">${r.start}<i>${r.end}</i></div>
+      <div><div class="nm">${r.emoji || '📘'} ${r.name}</div>
+      <div class="meta"><span class="pill">🚪 ${r.room}</span><span class="pill">⏱ ${r.periods} คาบ</span></div>
+      <div class="meta">👨‍🏫 ${r.teacher}</div><div class="code">${r.code}</div></div>
+      <div class="bar"><span></span></div></article>`;
+        prev = r;
+      });
+      const sec = document.createElement('section'); sec.id = 'd' + k; sec.dataset.d = k; sec.style.setProperty('--c', D.color);
+      sec.innerHTML = `<div class="wrap"><h2>${D.name}</h2><div class="sum">เรียน ${rows.length} วิชา · ${rows[0].start} - ${rows[rows.length - 1].end} น.</div><div class="banner" hidden></div>${h}</div>`;
+      main.appendChild(sec); secs[k] = sec;
+    });
+    const btns = [...tabs.children];
+    const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) btns.forEach(b => b.classList.toggle('active', b.dataset.d == e.target.dataset.d)) }), { rootMargin: '-45% 0px -45% 0px' });
+    Object.values(secs).forEach(s => io.observe(s));
+
+    // ----- อัปเดตสถานะตามเวลา -----
+    function tick() {
+      const { dow, mins, d } = now();
+      $('clock').textContent = (d || new Date(2000, 0, 1, Math.floor(mins / 60), mins % 60)).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+      btns.forEach(b => b.classList.toggle('today', b.dataset.d == dow));
+      Object.keys(secs).forEach(k => {
+        const sec = secs[k], ban = sec.querySelector('.banner'), cards = [...sec.querySelectorAll('.card')];
+        let cur = null, next = null;
+        cards.forEach(c => {
+          const s = +c.dataset.s, e = +c.dataset.e; c.classList.remove('now', 'done');
+          const chip = c.querySelector('.chip');
+
+          // วันที่ผ่านมาแล้วในสัปดาห์นี้ (และเสาร์-อาทิตย์ทั้งหมด) ขีดฆ่าทั้งวัน
+          if (+k < dow || dow === 0 || dow === 6) { c.classList.add('done'); chip.textContent = '✓ จบแล้ว'; return }
+
+          if (k != dow) return;
+          if (mins >= s && mins < e) {
+            c.classList.add('now'); cur = c; chip.textContent = '🔥 กำลังเรียน!';
+            c.querySelector('.bar span').style.width = ((mins - s) / (e - s) * 100) + '%'
+          }
+          else if (mins >= e) { c.classList.add('done'); chip.textContent = '✓ จบแล้ว' }
+          else if (!next) next = c;
+        });
+        if (k != dow) { ban.hidden = true; return }
+        ban.hidden = false;
+        if (cur) ban.innerHTML = `🔥 ตอนนี้เรียน <b>${cur.dataset.n}</b><br>เหลืออีก ${left(+cur.dataset.e - mins)}${next ? ` · ต่อไป: ${next.dataset.n}` : ' · คาบสุดท้ายแล้ว สู้ๆ!'}`;
+        else if (next) ban.innerHTML = `⏳ คาบถัดไป <b>${next.dataset.n}</b><br>เริ่มอีก ${left(+next.dataset.s - mins)}`;
+        else ban.innerHTML = '🎉 เลิกเรียนแล้ว! วันนี้เก่งมาก กลับบ้านได้~';
+      });
+    }
+    tick(); setInterval(tick, 15000);
+
+    // ----- ธีม -----
+    const root = document.documentElement, tb = $('theme');
+    function setTheme(t) { root.dataset.theme = t; tb.textContent = t === 'dark' ? '☀️' : '🌙'; try { localStorage.setItem('theme', t) } catch (e) { } }
+    let saved = null; try { saved = localStorage.getItem('theme') } catch (e) { }
+    setTheme(saved || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light'));
+    tb.onclick = () => setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark');
+
+    // ----- เปิดมาที่วันนี้ (เสาร์-อาทิตย์ไปจันทร์) -----
+    const t = now().dow, go = (t >= 1 && t <= 5) ? t : 1;
+    document.documentElement.style.scrollBehavior = 'auto';
+    $('d' + go).scrollIntoView();
+    setTimeout(() => document.documentElement.style.scrollBehavior = '', 100);
+  </script>
+</body>
+
+</html>
